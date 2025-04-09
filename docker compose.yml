@@ -61,22 +61,6 @@ services:
     restart: unless-stopped
     networks:
       - game-logs-network
-  stats_tracker:
-    build:
-      context: .
-      dockerfile: stats_tracker/Dockerfile
-    container_name: game-stats-tracker
-    volumes:
-      - ./config.py:/app/config.py
-    depends_on:
-      - redis
-      - log_collector
-    environment:
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-    restart: unless-stopped
-    networks:
-      - game-logs-network
 
 networks:
   game-logs-network:
