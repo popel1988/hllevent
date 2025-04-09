@@ -190,17 +190,9 @@ def send_server_message(message):
     
     success_count = 0
     # Jedem Spieler einzeln eine Nachricht senden
-    for player in players:
-        # Prüfen, ob player ein Dictionary oder ein String ist
-        if isinstance(player, dict):
-            player_id = player.get("player_id") or player.get("steam_id_64") or player.get("epic_id") or player.get("xbox_id")
-        else:
-            # Wenn player ein String ist, verwende ihn direkt als player_id
-            player_id = player
-        
-        if player_id:
-            if message_player(player_id, message):
-                success_count += 1
+    for player_id, player_name in players.items():
+        if message_player(player_id, message):
+            success_count += 1
     
     print(f"Nachricht an {success_count} von {len(players)} Spielern gesendet: {message}")
     return success_count > 0
