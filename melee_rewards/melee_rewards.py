@@ -8,7 +8,14 @@ import pytz
 from config import API_URL, API_KEY, REDIS_HOST, REDIS_PORT
 
 # Redis-Verbindung
-r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0)
+try:
+    r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0)
+    ping_response = r.ping()
+    print(f"Redis-Verbindung erfolgreich: {ping_response}")
+except Exception as e:
+    print(f"Redis-Verbindungsfehler: {e}")
+    exit(1)
+
 pubsub = r.pubsub()
 
 # API-Konfiguration
@@ -78,6 +85,7 @@ def process_melee_kill(log_data):
 
 # Den game_logs Channel abonnieren
 pubsub.subscribe('game_logs')
+print(f"Erfolgreich 'game_logs' Channel abonniert auf {REDIS_HOST}:{REDIS_PORT}")
 
 print("Melee-Kill VIP-Belohnungs-Service gestartet. Warte auf Kill-Events...")
 
@@ -88,12 +96,15 @@ try:
     while True:
         message = pubsub.get_message()
         
-        if message and message['type'] == 'message':
-            log_data = json.loads(message['data'])
-            
-            if (log_data.get('type') == 'KILL' and 
-                log_data.get('weapon') in MELEE_WEAPONS):
-                process_melee_kill(log_data)
+        if message:
+            print(f"Nachricht empfangen: {message['type']}")
+            if message['type'] == 'message':
+                print(f"Daten empfangen: {message['data'][:100]}...")  # Ersten 100 Zeichen anzeigen
+                log_data = json.loads(message['data'])
+                
+                if (log_data.get('type') == 'KILL' and 
+                    log_data.get('weapon') in MELEE_WEAPONS):
+                    process_melee_kill(log_data)
         
         time.sleep(0.01)
         
