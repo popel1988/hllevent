@@ -152,14 +152,15 @@ def grant_vip_status(player_id, player_name, kills):
 
 def get_player_ids():
     """Ruft alle aktuellen Spieler-IDs vom Server ab"""
-    response = requests.get(f"{API_URL}/api/get_playerids", headers=headers)
+    # Parameter as_dict=True hinzufügen, um ein Dictionary zurückzubekommen
+    response = requests.get(f"{API_URL}/api/get_playerids?as_dict=True", headers=headers)
     if response.status_code == 200:
         data = response.json()
         print(f"Spieler-IDs erfolgreich abgerufen: {len(data)} Spieler gefunden")
         return data
     else:
         print(f"Fehler beim Abrufen der Spieler-IDs: {response.status_code}")
-        return []
+        return {}
 
 def message_player(player_id, message):
     """Sendet eine Nachricht an einen bestimmten Spieler"""
@@ -168,14 +169,15 @@ def message_player(player_id, message):
     data = {
         "player_id": player_id,
         "message": message,
-        "platform": platform
+        "by": "VIP Reward System",
+        "save_message": True
     }
     
     response = requests.post(f"{API_URL}/api/message_player", headers=headers, json=data)
     if response.status_code == 200:
         return True
     else:
-        print(f"Fehler beim Senden der Nachricht an Spieler {player_id} ({platform}): {response.status_code}, Antwort: {response.text}")
+        print(f"Fehler beim Senden der Nachricht an Spieler {player_id}: {response.status_code}, Antwort: {response.text}")
         return False
 
 def send_server_message(message):
