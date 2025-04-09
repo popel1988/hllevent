@@ -19,35 +19,58 @@ MELEE_WEAPONS = ["M3 Knife", "Feldspaten"]
 # VIP-Belohnungsdauer in Stunden
 VIP_DURATION_HOURS = 24  # 1 Tag
 
-def grant_vip_status(player_id, player_name, weapon):
+def determine_platform(player_id):
+    """Bestimmt die Plattform basierend auf der ID oder dem Format"""
+    if not player_id:
+        return "unknown"
+        
+    if isinstance(player_id, str):
+        # Steam IDs sind typischerweise 17-stellige Zahlen
+        if player_id.isdigit() and len(player_id) == 17:
+            return "steam"
+            
+        # Epic Games IDs sind 32-stellige Hex-Strings
+        if len(player_id) == 32 and all(c in "0123456789abcdef" for c in player_id.lower()):
+            return "epic"
+            
+        # Xbox Live IDs haben oft ein bestimmtes Format
+        if player_id.startswith("xbl_") or "xbox" in player_id.lower():
+            return "xbox"
+    
+    # Standardfall, wenn keine spezifische Erkennung möglich ist
+    return "unknown"
+
+def grant_vip_status(player_id, player_name, weapon, platform="unknown"):
     """Gewährt einem Spieler VIP-Status über die API"""
     data = {
         "player_id": player_id,
         "description": f"Belohnung für einen Kill mit {weapon}",
-        "expiration": "24h"  # 24 Stunden als String formatiert
+        "expiration": f"{VIP_DURATION_HOURS}h",
+        "platform": platform
     }
     
     response = requests.post(f"{API_URL}/api/add_vip", headers=headers, json=data)
     if response.status_code == 200:
-        print(f"VIP-Status erfolgreich für {player_name} (ID: {player_id}) gewährt")
+        print(f"VIP-Status erfolgreich für {player_name} (ID: {player_id}, Plattform: {platform}) gewährt")
         return True
     else:
         print(f"Fehler beim Gewähren des VIP-Status: {response.status_code}, Antwort: {response.text}")
         return False
 
-def message_player(steam_id, message):
+def message_player(player_id, message, platform="unknown"):
     """Sendet eine Nachricht an einen bestimmten Spieler"""
     data = {
-        "steam_id_64": steam_id,
-        "message": message
+        "player_id": player_id,
+        "message": message,
+        "platform": platform
     }
     
     response = requests.post(f"{API_URL}/api/message_player", headers=headers, json=data)
     if response.status_code == 200:
-        print(f"Nachricht erfolgreich an Spieler {steam_id} gesendet")
+        print(f"Nachricht erfolgreich an Spieler {player_id} ({platform}) gesendet")
         return True
     else:
-        print(f"Fehler beim Senden der Nachricht an Spieler {steam_id}: {response.status_code}, Antwort: {response.text}")
+        print(f"Fehler beim Senden der Nachricht an Spieler {player_id} ({platform}): {response.status_code}, Antwort: {response.text}")
         return False
 
 def process_melee_kill(log_data):
@@ -60,12 +83,15 @@ def process_melee_kill(log_data):
     print(f"\n=== MELEE KILL ERKANNT ===")
     print(f"{killer_name} hat {victim_name} mit {weapon} getötet!")
     
+    # Plattform bestimmen
+    platform = determine_platform(killer_id)
+    
     # VIP-Status gewähren
-    if grant_vip_status(killer_id, killer_name, weapon):
+    if grant_vip_status(killer_id, killer_name, weapon, platform):
         # Persönliche Nachricht an den Spieler senden
-        message = f"Gratulation! Du hast {victim_name} mit {weapon} eliminiert und erhältst 24 Stunden VIP-Status!"
-        message_player(killer_id, message)
-        print(f"VIP-Status und Benachrichtigung für {killer_name} verarbeitet.")
+        message = f"Gratulation! Du hast {victim_name} mit {weapon} eliminiert und erhältst {VIP_DURATION_HOURS} Stunden VIP-Status!"
+        message_player(killer_id, message, platform)
+        print(f"VIP-Status und Benachrichtigung für {killer_name} ({platform}) verarbeitet.")
 
 # Den game_logs Channel abonnieren
 pubsub.subscribe('game_logs')
