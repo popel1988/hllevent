@@ -62,15 +62,16 @@ def message_player(player_id, message, platform="unknown"):
     data = {
         "player_id": player_id,
         "message": message,
-        "platform": platform
+        "by": "Melee Kill Reward System",
+        "save_message": True
     }
     
     response = requests.post(f"{API_URL}/api/message_player", headers=headers, json=data)
     if response.status_code == 200:
-        print(f"Nachricht erfolgreich an Spieler {player_id} ({platform}) gesendet")
+        print(f"Nachricht erfolgreich an Spieler {player_id} gesendet")
         return True
     else:
-        print(f"Fehler beim Senden der Nachricht an Spieler {player_id} ({platform}): {response.status_code}, Antwort: {response.text}")
+        print(f"Fehler beim Senden der Nachricht an Spieler {player_id}: {response.status_code}, Antwort: {response.text}")
         return False
 
 def process_melee_kill(log_data):
