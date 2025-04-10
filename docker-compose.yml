@@ -22,6 +22,7 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - MATCH_ENDED_POLL_INTERVAL=15
     restart: unless-stopped
     networks:
       - game-logs-network
