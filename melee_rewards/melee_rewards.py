@@ -6,6 +6,14 @@ import requests
 from datetime import datetime, timezone, timedelta
 import pytz
 from config import API_URL, API_KEY, REDIS_HOST, REDIS_PORT
+import logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler()]
+)
+logger = logging.getLogger(__name__)
+logger.info("Skript gestartet...")
 
 # Redis-Verbindung
 r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0)
