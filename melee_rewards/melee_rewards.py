@@ -3,19 +3,12 @@ import redis
 import json
 import time
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import pytz
 from config import API_URL, API_KEY, REDIS_HOST, REDIS_PORT
 
 # Redis-Verbindung
-try:
-    r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0)
-    ping_response = r.ping()
-    print(f"Redis-Verbindung erfolgreich: {ping_response}")
-except Exception as e:
-    print(f"Redis-Verbindungsfehler: {e}")
-    exit(1)
-
+r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0)
 pubsub = r.pubsub()
 
 # API-Konfiguration
@@ -36,18 +29,21 @@ def convert_utc_to_local(utc_time_str):
 
 def grant_vip_status(player_id, player_name, weapon):
     """Gewährt einem Spieler VIP-Status über die API"""
+    expiration_time = datetime.now(timezone.utc) + timedelta(hours=VIP_DURATION_HOURS)
+    
     data = {
         "player_id": player_id,
         "description": f"Belohnung für einen Kill mit {weapon}",
-        "expiration": f"{VIP_DURATION_HOURS}h"
+        "expiration": expiration_time.isoformat(timespec='milliseconds').replace("+00:00", "Z")
     }
     
     response = requests.post(f"{API_URL}/api/add_vip", headers=headers, json=data)
+    
     if response.status_code == 200:
-        print(f"VIP-Status erfolgreich für {player_name} (ID: {player_id}) gewährt")
+        print(f"VIP bis {expiration_time} für {player_name} gesetzt")
         return True
     else:
-        print(f"Fehler beim Gewähren des VIP-Status: {response.status_code}, Antwort: {response.text}")
+        print(f"Fehler beim Setzen des VIP-Status: {response.status_code}, Antwort: {response.text}")
         return False
 
 def message_player(player_id, message):
@@ -61,7 +57,7 @@ def message_player(player_id, message):
     
     response = requests.post(f"{API_URL}/api/message_player", headers=headers, json=data)
     if response.status_code == 200:
-        print(f"Nachricht erfolgreich an Spieler {player_id} gesendet")
+        print(f"Nachricht erfolgreich an {player_id} gesendet")
         return True
     else:
         print(f"Fehler beim Senden der Nachricht an Spieler {player_id}: {response.status_code}, Antwort: {response.text}")
@@ -69,25 +65,30 @@ def message_player(player_id, message):
 
 def process_melee_kill(log_data):
     """Verarbeitet einen Melee-Kill und belohnt den Spieler"""
-    killer_name = log_data["player1_name"]
-    killer_id = log_data["player1_id"]
-    victim_name = log_data["player2_name"]
-    weapon = log_data["weapon"]
+    killer_name = log_data.get("player1_name")
+    killer_id = log_data.get("player1_id")
+    victim_name = log_data.get("player2_name")
+    weapon = log_data.get("weapon")
+    event_time = log_data.get("event_time")
     
-    local_time = convert_utc_to_local(log_data["event_time"])
+    if not killer_name or not killer_id or not weapon:
+        print("Ungültige Melee-Kill-Daten, überspringen...")
+        return
+    
+    local_time = convert_utc_to_local(event_time)
     print(f"\n=== MELEE KILL ERKANNT: {local_time} ===")
     print(f"{killer_name} hat {victim_name} mit {weapon} getötet!")
     
+    # Gewährt VIP-Status und sendet eine Nachricht
     if grant_vip_status(killer_id, killer_name, weapon):
         message = f"Gratulation! Du hast {victim_name} mit {weapon} eliminiert und erhältst {VIP_DURATION_HOURS} Stunden VIP-Status!"
         message_player(killer_id, message)
-        print(f"VIP-Status und Benachrichtigung für {killer_name} verarbeitet.")
+        print(f"VIP-Status und Nachricht für {killer_name} verarbeitet.")
 
 # Den game_logs Channel abonnieren
 pubsub.subscribe('game_logs')
-print(f"Erfolgreich 'game_logs' Channel abonniert auf {REDIS_HOST}:{REDIS_PORT}")
 
-print("Melee-Kill VIP-Belohnungs-Service gestartet. Warte auf Kill-Events...")
+print("Melee-Kill VIP-Belohnungs-Service gestartet. Warte auf KILL-Events...")
 
 # Nachricht zum Überspringen der Bestätigungsnachricht
 pubsub.get_message()
@@ -96,15 +97,13 @@ try:
     while True:
         message = pubsub.get_message()
         
-        if message:
-            print(f"Nachricht empfangen: {message['type']}")
-            if message['type'] == 'message':
-                print(f"Daten empfangen: {message['data'][:100]}...")  # Ersten 100 Zeichen anzeigen
-                log_data = json.loads(message['data'])
-                
-                if (log_data.get('type') == 'KILL' and 
-                    log_data.get('weapon') in MELEE_WEAPONS):
-                    process_melee_kill(log_data)
+        if message and message['type'] == 'message':
+            log_data = json.loads(message['data'])
+            
+            # Nur auf KILL-Events mit Melee-Waffen reagieren
+            if (log_data.get('type') == 'KILL' and 
+                log_data.get('weapon') in MELEE_WEAPONS):
+                process_melee_kill(log_data)
         
         time.sleep(0.01)
         
