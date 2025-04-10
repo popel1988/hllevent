@@ -12,8 +12,8 @@ services:
 
   log_collector:
     build:
-      context: .
-      dockerfile: log_collector/Dockerfile
+      context: ./log_collector
+      dockerfile: Dockerfile
     container_name: game-logs-collector
     volumes:
       - ./config.py:/app/config.py
@@ -22,21 +22,19 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - MATCH_ENDED_POLL_INTERVAL=15
     restart: unless-stopped
     networks:
       - game-logs-network
 
   vip_rewards:
     build:
-      context: .
-      dockerfile: vip_rewards/Dockerfile
+      context: ./vip_rewards
+      dockerfile: Dockerfile
     container_name: game-vip-rewards
     volumes:
       - ./config.py:/app/config.py
     depends_on:
       - redis
-      - log_collector
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -46,14 +44,13 @@ services:
 
   melee_rewards:
     build:
-      context: .
-      dockerfile: melee_rewards/Dockerfile
+      context: ./melee_rewards
+      dockerfile: Dockerfile
     container_name: game-melee-rewards
     volumes:
       - ./config.py:/app/config.py
     depends_on:
       - redis
-      - log_collector
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
