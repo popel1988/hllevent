@@ -95,30 +95,36 @@ def grant_vip_status(player_id, player_name, kills):
 
 def get_player_ids():
     """Ruft alle aktuellen Spieler-IDs vom Server ab"""
-    response = requests.get(f"{API_URL}/api/get_playerids?as_dict=True", headers=headers)
+    response = requests.get(f"{API_URL}/api/get_playerids", headers=headers)
     if response.status_code == 200:
         data = response.json()
-        print(f"Spieler-IDs erfolgreich abgerufen: {len(data)} Spieler gefunden")
-        return data
+        # Direkt die result-Liste zurückgeben
+        return data.get("result", [])
     else:
         print(f"Fehler beim Abrufen der Spieler-IDs: {response.status_code}")
-        return {}
+        return []
 
-def message_player(player_id, message):
-    """Sendet eine Nachricht an einen bestimmten Spieler"""
-    data = {
-        "player_id": player_id,
-        "message": message,
-        "by": "VIP Reward System",
-        "save_message": True
-    }
-    
-    response = requests.post(f"{API_URL}/api/message_player", headers=headers, json=data)
-    if response.status_code == 200:
-        return True
-    else:
-        print(f"Fehler beim Senden der Nachricht an Spieler {player_id}: {response.status_code}, Antwort: {response.text}")
+def send_server_message(message):
+    """Sendet eine Nachricht an alle Spieler auf dem Server"""
+    players = get_player_ids()
+    if not players:
+        print("Keine Spieler gefunden, an die Nachrichten gesendet werden können")
         return False
+    
+    success_count = 0
+    for player_entry in players:
+        if isinstance(player_entry, list) and len(player_entry) >= 2:
+            player_name = player_entry[0]
+            player_id = player_entry[1]
+            
+            if message_player(player_id, message):
+                success_count += 1
+                print(f"Nachricht an {player_name} ({player_id}) gesendet")
+        else:
+            print(f"Ungültiges Spielerformat: {player_entry}")
+    
+    print(f"Nachricht an {success_count} von {len(players)} Spielern gesendet")
+    return success_count > 0
 
 def send_server_message(message):
     """Sendet eine Nachricht an alle Spieler auf dem Server"""
