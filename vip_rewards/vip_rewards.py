@@ -38,10 +38,29 @@ def get_scoreboard():
     if response.status_code == 200:
         data = response.json()
         print("API-Antwort erfolgreich abgerufen")
-        return data.get("result", [])
+        
+        # Prüfen, ob 'result' im Dictionary vorhanden ist
+        if "result" in data:
+            result = data["result"]
+            
+            # Wenn result ein Dictionary ist mit 'stats' Schlüssel
+            if isinstance(result, dict) and "stats" in result:
+                stats = result["stats"]
+                if isinstance(stats, list):
+                    print(f"Spielerdaten gefunden: {len(stats)} Spieler")
+                    return stats
+            
+            # Wenn result eine Liste ist
+            elif isinstance(result, list):
+                print(f"Spielerdaten gefunden: {len(result)} Spieler")
+                return result
+        
+        print("Keine Spielerdaten in der API-Antwort gefunden")
+        print(f"API-Antwort-Struktur: {json.dumps(data, indent=2)[:500]}...")
+        return []
     else:
         print(f"Fehler beim Abrufen der Anzeigetafel: {response.status_code}")
-        return None
+        return []
 
 def find_best_killers(scoreboard_data):
     """Identifiziert den Spieler mit den meisten Kills"""
