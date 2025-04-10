@@ -3,19 +3,13 @@ import redis
 import json
 import time
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import pytz
+from collections import defaultdict
 from config import API_URL, API_KEY, REDIS_HOST, REDIS_PORT
 
 # Redis-Verbindung
-try:
-    r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0)
-    ping_response = r.ping()
-    print(f"Redis-Verbindung erfolgreich: {ping_response}")
-except Exception as e:
-    print(f"Redis-Verbindungsfehler: {e}")
-    exit(1)
-
+r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0)
 pubsub = r.pubsub()
 
 # API-Konfiguration
@@ -25,6 +19,20 @@ headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/js
 last_reward_time = 0
 REWARD_COOLDOWN = 300  # 5 Minuten Abkühlzeit in Sekunden
 
+# Match-Statistiken
+current_match = {
+    "server": None,
+    "start_time": None,
+    "kills": defaultdict(int),
+    "deaths": defaultdict(int)
+}
+
+def reset_match_stats():
+    """Setzt die Statistiken für ein neues Match zurück"""
+    current_match["kills"].clear()
+    current_match["deaths"].clear()
+    print("=== MATCH STATISTIKEN ZURÜCKGESETT ===")
+
 def convert_utc_to_local(utc_time_str):
     """Konvertiert einen UTC-Zeitstempel in lokale Zeit (CEST)"""
     utc_time = datetime.fromisoformat(utc_time_str.replace('Z', '+00:00'))
@@ -33,143 +41,70 @@ def convert_utc_to_local(utc_time_str):
     return local_time.strftime('%Y-%m-%d %H:%M:%S %Z')
 
 def get_scoreboard():
-    """Ruft die aktuelle Anzeigetafel ab"""
     response = requests.get(f"{API_URL}/api/get_live_scoreboard", headers=headers)
-    if response.status_code == 200:
-        data = response.json()
-        print("API-Antwort erfolgreich abgerufen")
-        
-        # Prüfen, ob 'result' im Dictionary vorhanden ist
-        if "result" in data:
-            result = data["result"]
-            
-            # Wenn result ein Dictionary ist mit 'stats' Schlüssel
-            if isinstance(result, dict) and "stats" in result:
-                stats = result["stats"]
-                if isinstance(stats, list):
-                    print(f"Spielerdaten gefunden: {len(stats)} Spieler")
-                    return stats
-            
-            # Wenn result eine Liste ist
-            elif isinstance(result, list):
-                print(f"Spielerdaten gefunden: {len(result)} Spieler")
-                return result
-        
-        print("Keine Spielerdaten in der API-Antwort gefunden")
-        print(f"API-Antwort-Struktur: {json.dumps(data, indent=2)[:500]}...")
-        return []
-    else:
-        print(f"Fehler beim Abrufen der Anzeigetafel: {response.status_code}")
-        return []
+    if response.status_code != 200:
+        return None
 
-def find_best_killers(scoreboard_data):
-    """Identifiziert den Spieler mit den meisten Kills"""
-    if not scoreboard_data:
-        return {"player": None, "kills": 0}
+    data = response.json()
     
-    best_killer = {"player": None, "kills": 0}
+    # Debug-Log des kompletten API-Response
+    print("Scoreboard Rohdaten:", json.dumps(data, indent=2))
     
-    for player in scoreboard_data:
-        if isinstance(player, dict) and "kills" in player:
-            kills = player.get("kills", 0)
-            if kills > best_killer["kills"]:
-                best_killer = {"player": player, "kills": kills}
+    # Extrahiere Spielerliste aus der verschachtelten Struktur
+    players = data.get("result", {}).get("stats", [])
     
-    return best_killer
+    if not players:
+        print("Keine Spielerdaten im Scoreboard gefunden")
+        return None
+    
+    print(f"Gefundene Spieler: {len(players)}")
+    return players
 
 def grant_vip_status(player_id, player_name, kills):
-    """Gewährt einem Spieler VIP-Status über die API"""
+    """Gewährt VIP-Status mit korrekter Zeitangabe"""
+    expiration_time = datetime.now(timezone.utc) + timedelta(hours=24)
+    
     data = {
         "player_id": player_id,
-        "description": f"Belohnung für beste Leistung mit {kills} Kills",
-        "expiration": "24h"
+        "description": f"Top Killer mit {kills} Kills",
+        "expiration": expiration_time.isoformat(timespec='milliseconds').replace("+00:00", "Z")
     }
     
     response = requests.post(f"{API_URL}/api/add_vip", headers=headers, json=data)
+    
     if response.status_code == 200:
-        print(f"VIP-Status erfolgreich für {player_name} (ID: {player_id}) gewährt")
+        print(f"VIP bis {expiration_time} für {player_name} gesetzt")
         return True
     else:
-        print(f"Fehler beim Gewähren des VIP-Status: {response.status_code}, Antwort: {response.text}")
+        print(f"API Fehler: {response.status_code} - {response.text}")
         return False
-
-def get_player_ids():
-    """Ruft alle aktuellen Spieler-IDs vom Server ab"""
-    response = requests.get(f"{API_URL}/api/get_playerids", headers=headers)
-    if response.status_code == 200:
-        data = response.json()
-        # Direkt die result-Liste zurückgeben
-        return data.get("result", [])
-    else:
-        print(f"Fehler beim Abrufen der Spieler-IDs: {response.status_code}")
-        return []
-
-def send_server_message(message):
-    """Sendet eine Nachricht an alle Spieler auf dem Server"""
-    players = get_player_ids()
-    if not players:
-        print("Keine Spieler gefunden, an die Nachrichten gesendet werden können")
-        return False
-    
-    success_count = 0
-    for player_entry in players:
-        if isinstance(player_entry, list) and len(player_entry) >= 2:
-            player_name = player_entry[0]
-            player_id = player_entry[1]
-            
-            if message_player(player_id, message):
-                success_count += 1
-                print(f"Nachricht an {player_name} ({player_id}) gesendet")
-        else:
-            print(f"Ungültiges Spielerformat: {player_entry}")
-    
-    print(f"Nachricht an {success_count} von {len(players)} Spielern gesendet")
-    return success_count > 0
-
-def send_server_message(message):
-    """Sendet eine Nachricht an alle Spieler auf dem Server"""
-    players = get_player_ids()
-    if not players:
-        print("Keine Spieler gefunden, an die Nachrichten gesendet werden können")
-        return False
-    
-    success_count = 0
-    for player_id, player_name in players.items():
-        if message_player(player_id, message):
-            success_count += 1
-    
-    print(f"Nachricht an {success_count} von {len(players)} Spielern gesendet: {message}")
-    return success_count > 0
 
 def reward_best_killers():
-    """Identifiziert und belohnt den Spieler mit den meisten Kills"""
     scoreboard = get_scoreboard()
     if not scoreboard:
-        print("Konnte keine Spielerdaten abrufen.")
         return
-    
-    best_killer = find_best_killers(scoreboard)
-    
-    if best_killer["player"]:
-        player = best_killer["player"]
-        player_name = player.get("name", "Unbekannt")
-        player_id = player.get("player_id")
-        kills = best_killer["kills"]
-        
-        print(f"Bester Killer: {player_name} mit {kills} Kills")
-        
-        if player_id:
-            if grant_vip_status(player_id, player_name, kills):
-                message = f"Gratulation an {player_name}! Mit {kills} Kills wurde VIP-Status für 24 Stunden gewährt!"
-                send_server_message(message)
-        else:
-            print(f"Konnte VIP-Status nicht gewähren: Keine Spieler-ID für {player_name}")
-    else:
-        print("Kein Spieler gefunden.")
 
-def handle_match_ended_event(log_data):
-    """Verarbeitet ein MATCH ENDED Event und belohnt die besten Spieler"""
-    global last_reward_time
+    best_killer = {"player": None, "kills": 0}
+    
+    for player in scoreboard:
+        if isinstance(player, dict):
+            kills = player.get("kills", 0)
+            if kills > best_killer["kills"]:
+                best_killer = {
+                    "player": player,
+                    "kills": kills,
+                    "name": player.get("player", "Unbekannt"),
+                    "id": player.get("steam_id_64")
+                }
+    
+    if best_killer["id"]:
+        print(f"Bester Spieler: {best_killer['name']} ({best_killer['kills']} Kills)")
+        grant_vip_status(best_killer["id"], best_killer["name"], best_killer["kills"])
+    else:
+        print("Kein gültiger Top-Spieler gefunden")
+
+def handle_match_ended(log_data):
+    global last_reward_time, current_match
     current_time = time.time()
     
     server_id = log_data.get("server", "unknown")
@@ -179,7 +114,8 @@ def handle_match_ended_event(log_data):
         print(f"Belohnung übersprungen. Nächste Belohnung möglich in {REWARD_COOLDOWN - (current_time - last_reward_time):.0f} Sekunden.")
         return
     
-    print("Starte Belohnungsprozess für die besten Spieler...")
+    # Statistiken vor der Belohnung zurücksetzen
+    reset_match_stats()
     
     try:
         reward_best_killers()
@@ -187,12 +123,13 @@ def handle_match_ended_event(log_data):
         last_reward_time = current_time
     except Exception as e:
         print(f"Fehler im Belohnungsprozess: {str(e)}")
-        import traceback
         traceback.print_exc()
+    
+    # Sofortige Zurücksetzung der Stats nach der Belohnung
+    reset_match_stats()
 
 # Den game_logs Channel abonnieren
 pubsub.subscribe('game_logs')
-print(f"Erfolgreich 'game_logs' Channel abonniert auf {REDIS_HOST}:{REDIS_PORT}")
 
 print("VIP-Belohnungs-Service gestartet. Warte auf MATCH ENDED Events...")
 
@@ -203,16 +140,13 @@ try:
     while True:
         message = pubsub.get_message()
         
-        if message:
-            print(f"Nachricht empfangen: {message['type']}")
-            if message['type'] == 'message':
-                print(f"Daten empfangen: {message['data'][:100]}...")  # Ersten 100 Zeichen anzeigen
-                log_data = json.loads(message['data'])
-                
-                if log_data.get('type') == 'MATCH ENDED':
-                    local_time = convert_utc_to_local(log_data["event_time"])
-                    print(f"MATCH ENDED Event erkannt: {local_time}")
-                    handle_match_ended_event(log_data)
+        if message and message['type'] == 'message':
+            log_data = json.loads(message['data'])
+            
+            if log_data.get('type') == 'MATCH ENDED':
+                local_time = convert_utc_to_local(log_data["event_time"])
+                print(f"MATCH ENDED Event erkannt: {local_time}")
+                handle_match_ended(log_data)
         
         time.sleep(0.01)
         
