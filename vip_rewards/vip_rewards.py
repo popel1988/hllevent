@@ -33,16 +33,17 @@ def get_scoreboard():
         return None
 
     data = response.json()
+
     # Debug-Log des kompletten API-Response
     print(f"Scoreboard Rohdaten: {json.dumps(data, indent=2)[:500]}...")  # Zeigt nur die ersten 500 Zeichen an
 
-    stats = data.get("result", {}).get("stats", [])  # Spielerdaten direkt aus "stats" extrahieren
+    stats = data.get("result", {}).get("stats", [])  # Spielerstatistiken direkt aus "stats" extrahieren
 
     if not stats:
         print("Keine Spielerdaten im Scoreboard gefunden.")
         return []
 
-    print(f"Gefundene Spieler: {len(stats)}")
+    print(f"Gefundene Spieler: {len(stats)} Spieler")
     return stats
 
 def grant_vip_status(player_id, player_name, kills):
@@ -58,7 +59,7 @@ def grant_vip_status(player_id, player_name, kills):
     response = requests.post(f"{API_URL}/api/add_vip", headers=headers, json=data)
     
     if response.status_code == 200:
-        print(f"VIP bis {expiration_time} für {player_name} gesetzt")
+        print(f"VIP bis {expiration_time} für {player_name} gesetzt (ID: {player_id})")
         return True
     else:
         print(f"API Fehler: {response.status_code} - {response.text}")
@@ -76,17 +77,20 @@ def reward_best_killers():
     for player in scoreboard:
         if isinstance(player, dict):
             kills = player.get("kills", 0)
+            player_name = player.get("player", "Unbekannt")
+            player_id = player.get("player_id", None)
+            
+            # Spieler mit den meisten Kills finden
             if kills > best_killer["kills"]:
                 best_killer = {
-                    "player": player,
+                    "player": player_name,
                     "kills": kills,
-                    "name": player.get("player", "Unbekannt"),
-                    "id": player.get("player_id", None)
+                    "id": player_id
                 }
-    
+
     if best_killer["id"]:
-        print(f"Bester Spieler: {best_killer['name']} ({best_killer['kills']} Kills)")
-        grant_vip_status(best_killer["id"], best_killer["name"], best_killer["kills"])
+        print(f"Bester Spieler: {best_killer['player']} ({best_killer['kills']} Kills)")
+        grant_vip_status(best_killer["id"], best_killer["player"], best_killer["kills"])
     else:
         print("Kein gültiger Top-Spieler gefunden.")
 
@@ -96,8 +100,10 @@ def handle_match_ended(log_data):
     current_time = time.time()
     
     server_id = log_data.get("server", "unknown")
+    event_time = convert_utc_to_local(log_data.get("event_time", "Unbekannt"))
     print(f"\n=== MATCH BEENDET AUF SERVER {server_id} ===")
-    
+    print(f"MATCH ENDED Event erkannt um {event_time}")
+
     if current_time - last_reward_time < REWARD_COOLDOWN:
         print(f"Belohnung übersprungen. Nächste Belohnung möglich in {REWARD_COOLDOWN - (current_time - last_reward_time):.0f} Sekunden.")
         return
@@ -127,8 +133,6 @@ try:
             log_data = json.loads(message['data'])
             
             if log_data.get('type') == 'MATCH ENDED':
-                local_time = convert_utc_to_local(log_data["event_time"])
-                print(f"MATCH ENDED Event erkannt: {local_time}")
                 handle_match_ended(log_data)
         
         time.sleep(0.01)
