@@ -6,16 +6,10 @@ import threading
 from datetime import datetime, timezone
 import redis
 import os
+from config import API_URL, API_TOKEN, REDIS_HOST, REDIS_PORT  # Laden aus config.py
 
 # Redis-Verbindung
-redis_host = os.environ.get('REDIS_HOST', 'redis')
-redis_port = int(os.environ.get('REDIS_PORT', 6379))
-r = redis.Redis(host=redis_host, port=redis_port, db=0)
-
-# API-Konfiguration
-api_url = "http://v2202408232302282444.nicesrv.de:8011/api/get_historical_logs"
-api_token = "e9d35dfb-f213-4dcb-8120-86c3a0d9b71c"
-headers = {"Authorization": f"Bearer {api_token}"}
+r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0)
 
 # Speicher für bereits gesehene Log-IDs
 seen_log_ids = set()
@@ -38,13 +32,13 @@ def match_ended_poller():
                     "after": last_timestamp
                 }
                 
-                response = requests.post(api_url, headers=headers, json=match_ended_payload)
+                response = requests.post(f"{API_URL}/api/get_historical_logs", headers={"Authorization": f"Bearer {API_TOKEN}"}, json=match_ended_payload)
                 response.raise_for_status()
                 data = response.json()
                 
                 if data["result"]:
                     handle_match_ended(data["result"])
-
+        
         except Exception as e:
             print(f"Fehler im MATCH ENDED Poller: {e}")
         
@@ -74,9 +68,9 @@ while True:
             "after": last_timestamp
         }
 
-        kill_response = requests.post(api_url, headers=headers, json=kill_payload)
-        kill_response.raise_for_status()
-        kill_data = kill_response.json()
+        response = requests.post(f"{API_URL}/api/get_historical_logs", headers={"Authorization": f"Bearer {API_TOKEN}"}, json=kill_payload)
+        response.raise_for_status()
+        kill_data = response.json()
 
         if kill_data["result"]:
             # Sortiere und verarbeite nur neue Logs
