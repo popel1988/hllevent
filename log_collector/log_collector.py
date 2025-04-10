@@ -2,93 +2,90 @@
 import requests
 import json
 import time
-import threading
 from datetime import datetime, timezone
 import redis
 import os
-from config import API_URL, API_TOKEN, REDIS_HOST, REDIS_PORT  # Laden aus config.py
+import threading
+from config import API_URL, API_KEY, REDIS_HOST, REDIS_PORT  # Laden aus config.py
 
-# Redis-Verbindung
+# Redis-Konfiguration
 r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0)
 
-# Speicher für bereits gesehene Log-IDs
+# Gesehene Log-IDs und letzter Zeitstempel
 seen_log_ids = set()
-
-# Initialer Zeitstempel
 last_timestamp = datetime.now(timezone.utc).isoformat()
 
 # Lock für Thread-Sicherheit
-match_ended_lock = threading.Lock()
+lock = threading.Lock()
 
-def match_ended_poller():
-    """Pollt unabhängig MATCH ENDED Events"""
+def fetch_logs(action, limit=15):
+    """Holt Logs von der API für eine bestimmte Aktion."""
     global last_timestamp
+    payload = {
+        "action": action,
+        "limit": limit,
+        "after": last_timestamp
+    }
+
+    try:
+        response = requests.post(f"{API_URL}/api/get_historical_logs", headers={"Authorization": f"Bearer {API_KEY}"}, json=payload)
+        response.raise_for_status()
+        data = response.json()
+        return data.get("result", [])
+    except requests.exceptions.RequestException as e:
+        print(f"Fehler beim Abrufen von Logs ({action}): {e}")
+        return []
+
+def process_logs(logs):
+    """Verarbeitet und veröffentlicht neue Logs."""
+    global last_timestamp
+    new_logs = [log for log in logs if log["id"] not in seen_log_ids]
+
+    for log in sorted(new_logs, key=lambda x: x["event_time"]):
+        print(json.dumps(log, indent=2))  # Debug: Log anzeigen
+        seen_log_ids.add(log["id"])
+        r.publish('game_logs', json.dumps(log))  # Sende Log an Redis
+
+        # Aktualisiere den letzten Zeitstempel
+        last_timestamp = log["event_time"]
+
+def fetch_and_process_kills():
+    """Holt und verarbeitet KILL-Logs."""
     while True:
         try:
-            with match_ended_lock:
-                match_ended_payload = {
-                    "action": "MATCH ENDED",
-                    "limit": 1,
-                    "after": last_timestamp
-                }
-                
-                response = requests.post(f"{API_URL}/api/get_historical_logs", headers={"Authorization": f"Bearer {API_TOKEN}"}, json=match_ended_payload)
-                response.raise_for_status()
-                data = response.json()
-                
-                if data["result"]:
-                    handle_match_ended(data["result"])
-        
+            logs = fetch_logs("KILL", limit=15)
+            if logs:
+                with lock:
+                    process_logs(logs)
         except Exception as e:
-            print(f"Fehler im MATCH ENDED Poller: {e}")
-        
-        # Polling-Intervall (z.B. 15 Sekunden)
-        time.sleep(15)
+            print(f"Fehler beim Verarbeiten von KILL-Logs: {e}")
 
-def handle_match_ended(logs):
-    """Verarbeitet MATCH ENDED Events"""
-    global last_timestamp
-    for log in sorted(logs, key=lambda x: x["event_time"]):
-        if log["id"] not in seen_log_ids:
-            print(json.dumps(log, indent=2))  # Debug-Ausgabe
-            seen_log_ids.add(log["id"])
-            r.publish('game_logs', json.dumps(log))  # An Redis senden
+        time.sleep(5)  # Warte 5 Sekunden vor der nächsten Anfrage
 
-            # Aktualisiere den Zeitstempel
-            last_timestamp = log["event_time"]
+def fetch_and_process_match_ended():
+    """Holt und verarbeitet MATCH ENDED-Logs."""
+    while True:
+        try:
+            logs = fetch_logs("MATCH ENDED", limit=1)
+            if logs:
+                with lock:
+                    process_logs(logs)
+        except Exception as e:
+            print(f"Fehler beim Verarbeiten von MATCH ENDED-Logs: {e}")
 
-# Separater Thread für MATCH ENDED Polling
-threading.Thread(target=match_ended_poller, daemon=True).start()
+        time.sleep(15)  # Warte 15 Sekunden vor der nächsten Anfrage
 
-while True:
-    try:
-        kill_payload = {
-            "action": "KILL",
-            "limit": 15,
-            "after": last_timestamp
-        }
+def main():
+    """Hauptfunktion des Log Collectors."""
+    print("Log Collector gestartet. Warte auf Events...")
 
-        response = requests.post(f"{API_URL}/api/get_historical_logs", headers={"Authorization": f"Bearer {API_TOKEN}"}, json=kill_payload)
-        response.raise_for_status()
-        kill_data = response.json()
+    # Starte separate Threads für KILL- und MATCH ENDED-Logs
+    threading.Thread(target=fetch_and_process_kills, daemon=True).start()
+    threading.Thread(target=fetch_and_process_match_ended, daemon=True).start()
 
-        if kill_data["result"]:
-            # Sortiere und verarbeite nur neue Logs
-            sorted_logs = sorted(kill_data["result"], key=lambda x: x["event_time"])
-            new_logs = [log for log in sorted_logs if log["id"] not in seen_log_ids]
+    # Hauptprozess bleibt am Leben
+    while True:
+        time.sleep(1)
 
-            for log in new_logs:
-                print(json.dumps(log, indent=2))  # Debug-Ausgabe
-                seen_log_ids.add(log["id"])
-                r.publish('game_logs', json.dumps(log))  # An Redis senden
-
-            # Aktualisiere den Zeitstempel
-            if new_logs:
-                last_timestamp = new_logs[-1]["event_time"]
-
-        # Pause vor der nächsten Anfrage
-        time.sleep(5)
-
-    except Exception as e:
-        print(f"Fehler im Haupt-Polling: {e}")
-        time.sleep(10)  # Längere Pause bei Fehlern
+if __name__ == "__main__":
+    main()
