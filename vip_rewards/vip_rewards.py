@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 import redis
 import json
@@ -11,7 +10,7 @@ import logging
 
 # Logging-Konfiguration
 logging.basicConfig(
-    level=logging.INFO,  # Log-Level auf INFO setzen
+    level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[logging.StreamHandler()]  # Standard-Output Stream aktivieren
 )
@@ -79,8 +78,11 @@ def get_current_vips():
         if not player_id or not expires_str:
             continue
             
+        # Ignoriere permanente VIPs
+        if expires_str.startswith("3000-01-01"):
+            continue
+            
         try:
-            # Konvertiere den Zeitstempel in ein datetime-Objekt
             expires = datetime.fromisoformat(expires_str.replace('Z', '+00:00')).astimezone(timezone.utc)
             vips[player_id] = expires
         except Exception as e:
@@ -121,6 +123,40 @@ def grant_vip_status(player_id, player_name, kills, current_vips):
     logger.info(f"VIP bis {new_expiration} für {player_name} {action_type} (ID: {player_id})")
     return True
 
+def send_server_message(message):
+    """Sendet eine Nachricht an alle Spieler auf dem Server"""
+    try:
+        # Spieler-IDs abrufen
+        response = requests.get(f"{API_URL}/api/get_playerids", headers=headers)
+        response.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Fehler beim Abrufen der Spieler-IDs: {e}")
+        return
+
+    data = response.json()
+    players = data.get("result", [])
+    success_count = 0
+
+    for player_entry in players:
+        if isinstance(player_entry, list) and len(player_entry) > 1:
+            player_name, player_id = player_entry
+            # Nachricht an einzelne Spieler senden
+            data = {
+                "player_id": player_id,
+                "message": message,
+                "by": "VIP Belohnungssystem",
+                "save_message": True
+            }
+            try:
+                response = requests.post(f"{API_URL}/api/message_player", headers=headers, json=data)
+                response.raise_for_status()
+                success_count += 1
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Fehler beim Senden der Nachricht an {player_name} (ID: {player_id}): {e}")
+
+    logger.info(f"Nachricht an {success_count}/{len(players)} Spieler gesendet: {message[:50]}...")
+
+
 def reward_best_killers():
     """Identifiziert und belohnt die drei Spieler mit den meisten Kills"""
     scoreboard = get_scoreboard()
@@ -155,98 +191,6 @@ def reward_best_killers():
             top_players_message += f"{idx}. {player_name} - {kills} Kills\n"
 
     logger.info("=== ENDE DER TOP 3 LISTE ===")
-    send_server_message(top_players_message)
-
-def get_player_ids():
-    """Ruft alle aktuellen Spieler-IDs vom Server ab"""
-    try:
-        response = requests.get(f"{API_URL}/api/get_playerids", headers=headers)
-        response.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Fehler beim Abrufen der Spieler-IDs: {e}")
-        return []
-
-    data = response.json()
-    return data.get("result", [])
-
-def message_player(player_id, message):
-    """Sendet eine Nachricht an einen bestimmten Spieler"""
-    data = {
-        "player_id": player_id,
-        "message": message,
-        "by": "VIP Reward System",
-        "save_message": True
-    }
-
-    try:
-        response = requests.post(f"{API_URL}/api/message_player", headers=headers, json=data)
-        response.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Fehler beim Senden der Nachricht an Spieler {player_id}: {e}")
-        return False
-
-    logger.info(f"Nachricht erfolgreich an Spieler {player_id} gesendet.")
-    return True
-
-def send_server_message(message):
-    """Sendet eine Nachricht an alle Spieler auf dem Server"""
-    players = get_player_ids()
-    if not players:
-        logger.warning("Keine Spieler gefunden, an die Nachrichten gesendet werden können.")
-        return
-
-    success_count = 0
-    for player_entry in players:
-        if isinstance(player_entry, list) and len(player_entry) > 1:
-            player_name, player_id = player_entry
-            logger.info(f"Nachricht wird an {player_name} gesendet (ID: {player_id})")
-            if message_player(player_id, message):
-                success_count += 1
-
-    logger.info(f"Nachricht an {success_count}/{len(players)} Spieler gesendet: {message}")
-
-def reward_best_killers():
-    """Identifiziert und belohnt die drei Spieler mit den meisten Kills"""
-    scoreboard = get_scoreboard()
-    if not scoreboard:
-        logger.warning("Keine Spielerdaten im Scoreboard gefunden!")
-        return
-
-    # Sortiere alle Spieler basierend auf ihren Kills absteigend
-
-    sorted_players = sorted(
-        scoreboard,
-        key=lambda player: player.get("kills", 0),
-        reverse=True
-    )
-
-    # Nimm die besten 3 Spieler (oder weniger, falls weniger vorhanden)
-    top_players = sorted_players[:3]
-
-    logger.info("=== TOP 3 SPIELER ===")
-    top_players_message = "Die besten 3 Spieler des Matches:\n"  # Nachricht für alle Spieler
-    for idx, player in enumerate(top_players, 1):
-        player_name = player.get("player", "Unbekannt")
-        player_id = player.get("player_id")
-        kills = player.get("kills", 0)
-
-        logger.info(f"Platz {idx}: {player_name} | Kills: {kills} | ID: {player_id or 'Nicht gefunden'}")
-
-        # Nachricht für die Zusammenfassung
-        top_players_message += f"{idx}. {player_name} - {kills} Kills\n"
-
-        # Individuelle VIP-Vergabe, falls Spieler-ID vorhanden
-        if player_id:
-            if grant_vip_status(player_id, player_name, kills):
-                logger.info(f"VIP-Status an {player_name} vergeben.")
-        else:
-            logger.warning(f"Spieler {player_name} konnte nicht belohnt werden (keine gültige ID).")
-
-
-    logger.info("=== ENDE DER TOP 3 LISTE ===")
-
-
-    # Sende Nachricht mit den besten 3 Spielern an alle Spieler
     send_server_message(top_players_message)
 
 def handle_match_ended(log_data):
