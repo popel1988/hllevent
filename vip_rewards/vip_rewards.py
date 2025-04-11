@@ -128,37 +128,38 @@ def send_server_message(message):
     logger.info(f"Nachricht an {success_count}/{len(players)} Spieler gesendet: {message}")
 
 def reward_best_killers():
-    """Identifiziert und belohnt den Spieler mit den meisten Kills"""
+    """Identifiziert und belohnt die drei Spieler mit den meisten Kills"""
     scoreboard = get_scoreboard()
     if not scoreboard:
         logger.warning("Keine Spielerdaten im Scoreboard gefunden!")
         return
 
-    best_killer = {"name": None, "kills": 0, "id": None}
+    # Sortiere alle Spieler basierend auf ihren Kills absteigend
+    sorted_players = sorted(
+        scoreboard,
+        key=lambda player: player.get("kills", 0),
+        reverse=True
+    )
 
-    for player in scoreboard:
-        if isinstance(player, dict):
-            kills = player.get("kills", 0)
-            player_name = player.get("player", "Unbekannt")
-            player_id = player.get("player_id")
+    # Nimm die besten 3 Spieler (oder weniger, falls weniger vorhanden)
+    top_players = sorted_players[:3]
 
-            logger.info(f"Spieler: {player_name} | Kills: {kills} | ID: {player_id or 'Nicht gefunden'}")
+    logger.info("=== TOP 3 SPIELER ===")
+    for idx, player in enumerate(top_players, 1):
+        player_name = player.get("player", "Unbekannt")
+        player_id = player.get("player_id")
+        kills = player.get("kills", 0)
 
-            if kills > best_killer["kills"]:
-                best_killer = {
-                    "name": player_name,
-                    "kills": kills,
-                    "id": player_id
-                }
+        logger.info(f"Platz {idx}: {player_name} | Kills: {kills} | ID: {player_id or 'Nicht gefunden'}")
 
-    if not best_killer["id"]:
-        logger.warning("Fehler: Kein gültiger Spieler mit Kills gefunden!")
-        return
+        if not player_id:
+            logger.warning(f"Spieler {player_name} konnte nicht belohnt werden (keine gültige ID).")
+            continue
 
-    logger.info(f"=== BESTER SPIELER ===\nName: {best_killer['name']} | Kills: {best_killer['kills']} | ID: {best_killer['id']}")
-    if grant_vip_status(best_killer["id"], best_killer["name"], best_killer["kills"]):
-        message = f"Gratulation an {best_killer['name']}! Mit {best_killer['kills']} Kills wurde VIP-Status für 24 Stunden gewährt!"
-        send_server_message(message)
+        # VIP vergeben
+        if grant_vip_status(player_id, player_name, kills):
+            message = f"Gratulation an {player_name}! Mit {kills} Kills wurde VIP-Status für 24 Stunden gewährt!"
+            send_server_message(message)
 
 def handle_match_ended(log_data):
     """Verarbeitet ein MATCH ENDED Event und belohnt die besten Spieler"""
