@@ -45,6 +45,12 @@ def get_scoreboard():
         return None
 
     data = response.json()
+        
+     # Debug: Schreibe komplette Scoreboard-Daten in die Logs
+     print("=== ROHE SCOREBOARD-DATEN ===")
+     print(json.dumps(data, indent=2))
+     print("=============================")
+     
     stats = data.get("result", {}).get("stats", [])
 
     logger.info("=== SPIELERSTATISTIKEN ===")
