@@ -145,6 +145,7 @@ def reward_best_killers():
     top_players = sorted_players[:3]
 
     logger.info("=== TOP 3 SPIELER ===")
+    top_players_message = "Die besten 3 Spieler des Matches:\n"  # Nachricht für alle Spieler
     for idx, player in enumerate(top_players, 1):
         player_name = player.get("player", "Unbekannt")
         player_id = player.get("player_id")
@@ -152,14 +153,20 @@ def reward_best_killers():
 
         logger.info(f"Platz {idx}: {player_name} | Kills: {kills} | ID: {player_id or 'Nicht gefunden'}")
 
-        if not player_id:
-            logger.warning(f"Spieler {player_name} konnte nicht belohnt werden (keine gültige ID).")
-            continue
+        # Nachricht für die Zusammenfassung
+        top_players_message += f"{idx}. {player_name} - {kills} Kills\n"
 
-        # VIP vergeben
-        if grant_vip_status(player_id, player_name, kills):
-            message = f"Gratulation an {player_name}! Mit {kills} Kills wurde VIP-Status für 24 Stunden gewährt!"
-            send_server_message(message)
+        # Individuelle VIP-Vergabe, falls Spieler-ID vorhanden
+        if player_id:
+            if grant_vip_status(player_id, player_name, kills):
+                logger.info(f"VIP-Status an {player_name} vergeben.")
+        else:
+            logger.warning(f"Spieler {player_name} konnte nicht belohnt werden (keine gültige ID).")
+
+    logger.info("=== ENDE DER TOP 3 LISTE ===")
+
+    # Sende Nachricht mit den besten 3 Spielern an alle Spieler
+    send_server_message(top_players_message)
 
 def handle_match_ended(log_data):
     """Verarbeitet ein MATCH ENDED Event und belohnt die besten Spieler"""
