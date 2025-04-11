@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 import redis
 import json
@@ -10,9 +11,9 @@ import logging
 
 # Logging-Konfiguration
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.INFO,  # Log-Level auf INFO setzen
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler()]
+    handlers=[logging.StreamHandler()]  # Standard-Output Stream aktivieren
 )
 logger = logging.getLogger(__name__)
 logger.info("VIP Rewards Skript gestartet...")
@@ -47,6 +48,11 @@ def get_scoreboard():
     data = response.json()
     stats = data.get("result", {}).get("stats", [])
 
+    # Debug: Schreibe komplette Scoreboard-Daten in die Logs
+    logger.info("=== ROHE SCOREBOARD-DATEN ===")
+    logger.info(json.dumps(data, indent=2))
+    logger.info("=============================")
+     
     logger.info("=== SPIELERSTATISTIKEN ===")
     for player in stats[:10]:  # Zeige nur die ersten 10 Spieler an (falls umfangreich)
         logger.info(json.dumps(player, indent=2))
@@ -84,7 +90,7 @@ def get_current_vips():
     return vips
 
 def grant_vip_status(player_id, player_name, kills, current_vips):
-    """Gewährt 24h VIP-Zeit zusätzlich zur bestehenden VIP-Zeit"""
+    """Gewährt 24h VIP-Zeit zusätzlich zur bestehenden VIP-Zeit (falls vorhanden)"""
     now = datetime.now(timezone.utc)
     
     # Bestehende Ablaufzeit holen oder None
@@ -114,26 +120,6 @@ def grant_vip_status(player_id, player_name, kills, current_vips):
 
     logger.info(f"VIP bis {new_expiration} für {player_name} {action_type} (ID: {player_id})")
     return True
-
-def send_server_message(message):
-    """Sendet eine Nachricht an alle Spieler auf dem Server"""
-    try:
-        response = requests.get(f"{API_URL}/api/get_playerids", headers=headers)
-        response.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Fehler beim Abrufen der Spieler-IDs: {e}")
-        return
-
-    data = response.json()
-    players = data.get("result", [])
-    success_count = 0
-    for player_entry in players:
-        if isinstance(player_entry, list) and len(player_entry) > 1:
-            player_name, player_id = player_entry
-            logger.info(f"Nachricht wird an {player_name} gesendet (ID: {player_id})")
-            success_count += 1
-
-    logger.info(f"Nachricht an {success_count}/{len(players)} Spieler gesendet: {message}")
 
 def reward_best_killers():
     """Identifiziert und belohnt die drei Spieler mit den meisten Kills"""
@@ -171,6 +157,98 @@ def reward_best_killers():
     logger.info("=== ENDE DER TOP 3 LISTE ===")
     send_server_message(top_players_message)
 
+def get_player_ids():
+    """Ruft alle aktuellen Spieler-IDs vom Server ab"""
+    try:
+        response = requests.get(f"{API_URL}/api/get_playerids", headers=headers)
+        response.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Fehler beim Abrufen der Spieler-IDs: {e}")
+        return []
+
+    data = response.json()
+    return data.get("result", [])
+
+def message_player(player_id, message):
+    """Sendet eine Nachricht an einen bestimmten Spieler"""
+    data = {
+        "player_id": player_id,
+        "message": message,
+        "by": "VIP Reward System",
+        "save_message": True
+    }
+
+    try:
+        response = requests.post(f"{API_URL}/api/message_player", headers=headers, json=data)
+        response.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Fehler beim Senden der Nachricht an Spieler {player_id}: {e}")
+        return False
+
+    logger.info(f"Nachricht erfolgreich an Spieler {player_id} gesendet.")
+    return True
+
+def send_server_message(message):
+    """Sendet eine Nachricht an alle Spieler auf dem Server"""
+    players = get_player_ids()
+    if not players:
+        logger.warning("Keine Spieler gefunden, an die Nachrichten gesendet werden können.")
+        return
+
+    success_count = 0
+    for player_entry in players:
+        if isinstance(player_entry, list) and len(player_entry) > 1:
+            player_name, player_id = player_entry
+            logger.info(f"Nachricht wird an {player_name} gesendet (ID: {player_id})")
+            if message_player(player_id, message):
+                success_count += 1
+
+    logger.info(f"Nachricht an {success_count}/{len(players)} Spieler gesendet: {message}")
+
+def reward_best_killers():
+    """Identifiziert und belohnt die drei Spieler mit den meisten Kills"""
+    scoreboard = get_scoreboard()
+    if not scoreboard:
+        logger.warning("Keine Spielerdaten im Scoreboard gefunden!")
+        return
+
+    # Sortiere alle Spieler basierend auf ihren Kills absteigend
+
+    sorted_players = sorted(
+        scoreboard,
+        key=lambda player: player.get("kills", 0),
+        reverse=True
+    )
+
+    # Nimm die besten 3 Spieler (oder weniger, falls weniger vorhanden)
+    top_players = sorted_players[:3]
+
+    logger.info("=== TOP 3 SPIELER ===")
+    top_players_message = "Die besten 3 Spieler des Matches:\n"  # Nachricht für alle Spieler
+    for idx, player in enumerate(top_players, 1):
+        player_name = player.get("player", "Unbekannt")
+        player_id = player.get("player_id")
+        kills = player.get("kills", 0)
+
+        logger.info(f"Platz {idx}: {player_name} | Kills: {kills} | ID: {player_id or 'Nicht gefunden'}")
+
+        # Nachricht für die Zusammenfassung
+        top_players_message += f"{idx}. {player_name} - {kills} Kills\n"
+
+        # Individuelle VIP-Vergabe, falls Spieler-ID vorhanden
+        if player_id:
+            if grant_vip_status(player_id, player_name, kills):
+                logger.info(f"VIP-Status an {player_name} vergeben.")
+        else:
+            logger.warning(f"Spieler {player_name} konnte nicht belohnt werden (keine gültige ID).")
+
+
+    logger.info("=== ENDE DER TOP 3 LISTE ===")
+
+
+    # Sende Nachricht mit den besten 3 Spielern an alle Spieler
+    send_server_message(top_players_message)
+
 def handle_match_ended(log_data):
     """Verarbeitet ein MATCH ENDED Event und belohnt die besten Spieler"""
     global last_reward_time
@@ -192,6 +270,7 @@ def handle_match_ended(log_data):
         import traceback
         traceback.print_exc()
 
+# Den game_logs Channel abonnieren
 pubsub.subscribe('game_logs')
 logger.info("VIP-Belohnungs-Service gestartet. Warte auf MATCH ENDED Events...")
 
