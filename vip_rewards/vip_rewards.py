@@ -133,15 +133,23 @@ def reward_best_killers():
     
     # Finde den Spieler mit den meisten Kills
     for player in scoreboard:
-        if isinstance(player, dict):
-            kills = player.get("kills", 0)
-            if kills > best_killer["kills"]:
-                best_killer = {
-                    "player": player.get("player", "Unbekannt"),
-                    "kills": kills,
-                    "id": player.get("player_id")
-                }
-    
+    if isinstance(player, dict):
+        # Extrahiere relevante Daten
+        kills = player.get("kills", 0)
+        player_name = player.get("player", "Unbekannt")
+        player_id = player.get("player_id")
+
+        # Debug-Ausgabe zur Überprüfung
+        print(f"Spieler: {player_name} | Kills: {kills} | ID: {player_id or 'Nicht gefunden'}")
+
+        # Vergleiche mit dem aktuell besten Spieler
+        if kills > best_killer["kills"]:
+            best_killer = {
+                "name": player_name,
+                "kills": kills,
+                "id": player_id
+            }
+
     if not best_killer["id"]:
         print("Fehler: Kein gültiger Spieler mit Kills gefunden!")
         return
