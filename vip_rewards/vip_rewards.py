@@ -63,6 +63,7 @@ def get_scoreboard():
 def get_current_vips():
     """Holt die aktuellen VIPs mit ihren Ablaufzeiten"""
     try:
+        # API-Aufruf zur VIP-Liste
         response = requests.get(f"{API_URL}/api/get_vip_ids", headers=headers)
         response.raise_for_status()
     except requests.exceptions.RequestException as e:
@@ -71,14 +72,15 @@ def get_current_vips():
 
     data = response.json()
     vips = {}
+
     for entry in data.get("result", []):
-        if isinstance(entry, list) and len(entry) >= 2:
-            player_id = entry[1]
-            vip_data = entry[2] if len(entry) >=3 else {}
-            if isinstance(vip_data, dict):
-                expires = vip_data.get("vip_expiration")
-                if expires and expires != "3000-01-01T00:00:00+00:00":
-                    vips[player_id] = expires
+        # Stelle sicher, dass player_id und vip_expiration vorhanden sind
+        player_id = entry.get("player_id")
+        expiration = entry.get("vip_expiration")
+
+        if player_id and expiration:
+            vips[player_id] = expiration
+
     return vips
 
 def grant_vip_status(player_id, player_name, kills, current_vips):
@@ -93,7 +95,7 @@ def grant_vip_status(player_id, player_name, kills, current_vips):
             remaining = expires - now
             
             if remaining.total_seconds() > 86400:  # Mehr als 24h übrig
-                logger.info(f"VIP für {player_name} läuft erst in {remaining} ab. Übersprungen.")
+                logger.info(f"VIP für {player_name} läuft erst in {remaining}. Übersprungen.")
                 return False
                 
         except Exception as e:
