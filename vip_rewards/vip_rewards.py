@@ -117,6 +117,7 @@ def reward_best_killers():
     """Identifiziert und belohnt den Spieler mit den meisten Kills"""
     scoreboard = get_scoreboard()
     if not scoreboard:
+        print("Warnung: Keine Spielerdaten im Scoreboard gefunden!")
         return
 
     best_killer = {"player": None, "kills": 0}
@@ -130,6 +131,7 @@ def reward_best_killers():
             player_id = player.get("player_id")
             print(f"Spieler {idx}: {player_name} | Kills: {kills} | ID: {player_id}")
     
+    # Finde den Spieler mit den meisten Kills
     for player in scoreboard:
         if isinstance(player, dict):
             kills = player.get("kills", 0)
@@ -140,16 +142,22 @@ def reward_best_killers():
                     "id": player.get("player_id")
                 }
     
+    if not best_killer["id"]:
+        print("Fehler: Kein gültiger Spieler mit Kills gefunden!")
+        return
+    
+    # Debug: Zeige den besten Spieler
     print(f"=== BESTER SPIELER GEFUNDEN ===")
     print(f"Name: {best_killer['player']}")
     print(f"Kills: {best_killer['kills']}")
     print(f"ID: {best_killer['id']}")
     print("===============================")
     
-    if best_killer["id"]:
-        grant_vip_status(best_killer["id"], best_killer["player"], best_killer["kills"])
-    else:
-        print("Fehler: Keine gültige Spieler-ID gefunden")
+    # VIP vergeben
+    if grant_vip_status(best_killer["id"], best_killer["player"], best_killer["kills"]):
+        message = f"Gratulation an {best_killer['player']}! Mit {best_killer['kills']} Kills wurde VIP-Status für 24 Stunden gewährt!"
+        send_server_message(message)
+
 
 def handle_match_ended(log_data):
     """Verarbeitet ein MATCH ENDED Event und belohnt die besten Spieler"""
