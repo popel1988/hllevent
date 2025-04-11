@@ -60,9 +60,48 @@ def get_scoreboard():
 
     return stats
 
-def grant_vip_status(player_id, player_name, kills):
-    """Gewährt VIP-Status mit korrekter Zeitangabe"""
-    expiration_time = datetime.now(timezone.utc) + timedelta(hours=24)
+def get_current_vips():
+    """Holt die aktuellen VIPs mit ihren Ablaufzeiten"""
+    try:
+        response = requests.get(f"{API_URL}/api/get_vip_ids", headers=headers)
+        response.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Fehler beim Abrufen der VIP-Liste: {e}")
+        return {}
+
+    data = response.json()
+    vips = {}
+    for entry in data.get("result", []):
+        if isinstance(entry, list) and len(entry) >= 2:
+            player_id = entry[1]
+            vip_data = entry[2] if len(entry) >=3 else {}
+            if isinstance(vip_data, dict):
+                expires = vip_data.get("vip_expiration")
+                if expires and expires != "3000-01-01T00:00:00+00:00":
+                    vips[player_id] = expires
+    return vips
+
+def grant_vip_status(player_id, player_name, kills, current_vips):
+    """Gewährt VIP-Status nur wenn Restzeit <24h oder kein VIP vorhanden"""
+    now = datetime.now(timezone.utc)
+    
+    # Prüfe bestehendes VIP
+    if player_id in current_vips:
+        try:
+            expires_str = current_vips[player_id]
+            expires = datetime.fromisoformat(expires_str.replace('Z', '+00:00')).astimezone(timezone.utc)
+            remaining = expires - now
+            
+            if remaining.total_seconds() > 86400:  # Mehr als 24h übrig
+                logger.info(f"VIP für {player_name} läuft erst in {remaining} ab. Übersprungen.")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Fehler bei VIP-Überprüfung für {player_name}: {e}")
+
+    # Neues VIP gewähren
+    expiration_time = now + timedelta(hours=24)
+    
     data = {
         "player_id": player_id,
         "description": f"Top Killer mit {kills} Kills",
@@ -78,6 +117,39 @@ def grant_vip_status(player_id, player_name, kills):
 
     logger.info(f"VIP bis {expiration_time} für {player_name} gesetzt (ID: {player_id})")
     return True
+
+def reward_best_killers():
+    """Identifiziert und belohnt die drei Spieler mit den meisten Kills"""
+    scoreboard = get_scoreboard()
+    if not scoreboard:
+        logger.warning("Keine Spielerdaten im Scoreboard gefunden!")
+        return
+
+    current_vips = get_current_vips()  # Holt aktuelle VIPs vor der Verarbeitung
+
+    sorted_players = sorted(
+        scoreboard,
+        key=lambda player: player.get("kills", 0),
+        reverse=True
+    )
+
+    top_players = sorted_players[:3]
+
+    logger.info("=== TOP 3 SPIELER ===")
+    for idx, player in enumerate(top_players, 1):
+        player_name = player.get("player", "Unbekannt")
+        player_id = player.get("player_id")
+        kills = player.get("kills", 0)
+
+        logger.info(f"Platz {idx}: {player_name} | Kills: {kills} | ID: {player_id or 'Nicht gefunden'}")
+
+        if not player_id:
+            logger.warning(f"Spieler {player_name} konnte nicht belohnt werden (keine gültige ID).")
+            continue
+
+        if grant_vip_status(player_id, player_name, kills, current_vips):
+            message = f"Gratulation an {player_name}! Mit {kills} Kills wurde VIP-Status für 24 Stunden gewährt!"
+            send_server_message(message)
 
 def get_player_ids():
     """Ruft alle aktuellen Spieler-IDs vom Server ab"""
