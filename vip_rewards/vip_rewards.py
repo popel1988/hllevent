@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 import redis
 import json
@@ -45,14 +46,13 @@ def get_scoreboard():
         return None
 
     data = response.json()
-        
-     # Debug: Schreibe komplette Scoreboard-Daten in die Logs
-     print("=== ROHE SCOREBOARD-DATEN ===")
-     print(json.dumps(data, indent=2))
-     print("=============================")
-     
     stats = data.get("result", {}).get("stats", [])
 
+    # Debug: Schreibe komplette Scoreboard-Daten in die Logs
+    logger.info("=== ROHE SCOREBOARD-DATEN ===")
+    logger.info(json.dumps(data, indent=2))
+    logger.info("=============================")
+     
     logger.info("=== SPIELERSTATISTIKEN ===")
     for player in stats[:10]:  # Zeige nur die ersten 10 Spieler an (falls umfangreich)
         logger.info(json.dumps(player, indent=2))
