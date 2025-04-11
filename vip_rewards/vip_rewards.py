@@ -6,14 +6,6 @@ import requests
 from datetime import datetime, timezone, timedelta
 import pytz
 from config import API_URL, API_KEY, REDIS_HOST, REDIS_PORT
-import logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler()]
-)
-logger = logging.getLogger(__name__)
-logger.info("Skript gestartet...")
 
 # Redis-Verbindung
 r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0)
@@ -41,11 +33,7 @@ def get_scoreboard():
         return None
 
     data = response.json()
-
-    # Debug-Log des kompletten API-Response
-    print(f"Scoreboard Rohdaten: {json.dumps(data, indent=2)[:500]}...")  # Zeigt nur die ersten 500 Zeichen an
-
-    stats = data.get("result", {}).get("stats", [])  # Spielerstatistiken direkt aus "stats" extrahieren
+    stats = data.get("result", {}).get("stats", [])
 
     if not stats:
         print("Keine Spielerdaten im Scoreboard gefunden.")
@@ -73,6 +61,50 @@ def grant_vip_status(player_id, player_name, kills):
         print(f"API Fehler: {response.status_code} - {response.text}")
         return False
 
+def get_player_ids():
+    """Ruft alle aktuellen Spieler-IDs vom Server ab"""
+    response = requests.get(f"{API_URL}/api/get_playerids", headers=headers)
+    if response.status_code == 200:
+        data = response.json()
+        return data.get("result", [])
+    else:
+        print(f"Fehler beim Abrufen der Spieler-IDs: {response.status_code}")
+        return []
+
+def message_player(player_id, message):
+    """Sendet eine Nachricht an einen bestimmten Spieler"""
+    data = {
+        "player_id": player_id,
+        "message": message,
+        "by": "VIP Reward System",
+        "save_message": True
+    }
+    
+    response = requests.post(f"{API_URL}/api/message_player", headers=headers, json=data)
+    
+    if response.status_code == 200:
+        print(f"Nachricht erfolgreich an Spieler {player_id} gesendet.")
+        return True
+    else:
+        print(f"Fehler beim Senden der Nachricht an Spieler {player_id}: {response.status_code}, Antwort: {response.text}")
+        return False
+
+def send_server_message(message):
+    """Sendet eine Nachricht an alle Spieler auf dem Server"""
+    players = get_player_ids()
+    if not players:
+        print("Keine Spieler gefunden, an die Nachrichten gesendet werden können.")
+        return
+
+    success_count = 0
+    for player_entry in players:
+        if isinstance(player_entry, list) and len(player_entry) > 1:
+            player_name, player_id = player_entry  # Extrahiere Name und ID
+            if message_player(player_id, message):
+                success_count += 1
+
+    print(f"Nachricht an {success_count} Spieler gesendet: {message}")
+
 def reward_best_killers():
     """Identifiziert und belohnt den Spieler mit den meisten Kills"""
     scoreboard = get_scoreboard()
@@ -88,7 +120,6 @@ def reward_best_killers():
             player_name = player.get("player", "Unbekannt")
             player_id = player.get("player_id", None)
             
-            # Spieler mit den meisten Kills finden
             if kills > best_killer["kills"]:
                 best_killer = {
                     "player": player_name,
@@ -98,7 +129,9 @@ def reward_best_killers():
 
     if best_killer["id"]:
         print(f"Bester Spieler: {best_killer['player']} ({best_killer['kills']} Kills)")
-        grant_vip_status(best_killer["id"], best_killer["player"], best_killer["kills"])
+        if grant_vip_status(best_killer["id"], best_killer["player"], best_killer["kills"]):
+            message = f"Gratulation an {best_killer['player']}! Mit {best_killer['kills']} Kills wurde VIP-Status für 24 Stunden gewährt!"
+            send_server_message(message)
     else:
         print("Kein gültiger Top-Spieler gefunden.")
 
@@ -108,10 +141,8 @@ def handle_match_ended(log_data):
     current_time = time.time()
     
     server_id = log_data.get("server", "unknown")
-    event_time = convert_utc_to_local(log_data.get("event_time", "Unbekannt"))
     print(f"\n=== MATCH BEENDET AUF SERVER {server_id} ===")
-    print(f"MATCH ENDED Event erkannt um {event_time}")
-
+    
     if current_time - last_reward_time < REWARD_COOLDOWN:
         print(f"Belohnung übersprungen. Nächste Belohnung möglich in {REWARD_COOLDOWN - (current_time - last_reward_time):.0f} Sekunden.")
         return
@@ -130,21 +161,14 @@ pubsub.subscribe('game_logs')
 
 print("VIP-Belohnungs-Service gestartet. Warte auf MATCH ENDED Events...")
 
-# Nachricht zum Überspringen der Bestätigungsnachricht
-pubsub.get_message()
-
 try:
     while True:
         message = pubsub.get_message()
-        
         if message and message['type'] == 'message':
             log_data = json.loads(message['data'])
-            
             if log_data.get('type') == 'MATCH ENDED':
                 handle_match_ended(log_data)
-        
         time.sleep(0.01)
-        
 except KeyboardInterrupt:
     print("VIP-Belohnungs-Service wird beendet...")
     pubsub.unsubscribe('game_logs')
